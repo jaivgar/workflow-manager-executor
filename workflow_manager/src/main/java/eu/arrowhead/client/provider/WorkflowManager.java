@@ -19,8 +19,10 @@ import eu.arrowhead.client.common.misc.SecurityUtils;
 import eu.arrowhead.client.common.model.ArrowheadService;
 import eu.arrowhead.client.common.model.ArrowheadSystem;
 import eu.arrowhead.client.common.model.IntraCloudAuthEntry;
+import eu.arrowhead.client.common.model.OrchestrationResponse;
 import eu.arrowhead.client.common.model.OrchestrationStore;
 import eu.arrowhead.client.common.model.ServiceRegistryEntry;
+import eu.arrowhead.client.common.model.ServiceRequestForm;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -65,11 +67,11 @@ import org.glassfish.jersey.media.multipart.file.FileDataBodyPart;
  */
 public class WorkflowManager extends ArrowheadClientMain {
 
+  // Provider template fields
+	
   static String customResponsePayload;
   static PublicKey authorizationKey;
   static PrivateKey privateKey;
-  
-  public static boolean productArrived;
 
   private static boolean NEED_AUTH;
   private static boolean NEED_ORCH;
@@ -81,8 +83,20 @@ public class WorkflowManager extends ArrowheadClientMain {
   private static IntraCloudAuthEntry authEntry;
   private static List<OrchestrationStore> storeEntry = new ArrayList<>();
   
+  //Provider template fields
+  //=================================================================================================
+  // Consumer template fields
   
+  private static String orchestratorUrl;
+  
+  // Consumer template fields  
+  //=================================================================================================
+  // Workflow fields
+  
+  public static boolean productArrived;
 
+  
+  
   public static void main(String[] args) {
     new WorkflowManager(args);
   }
@@ -91,9 +105,9 @@ public class WorkflowManager extends ArrowheadClientMain {
     Set<Class<?>> classes = new HashSet<>(Arrays.asList(WorkflowResource.class));
     String[] packages = {"eu.arrowhead.client.common"};
     
-    productArrived = false;
-    
     init(ClientType.PROVIDER, args, classes, packages);
+    
+    productArrived = false;
     
     for (String arg : args) {
       switch (arg) {
@@ -129,12 +143,17 @@ public class WorkflowManager extends ArrowheadClientMain {
       customResponsePayload = props.getProperty("custom_payload");
     }
 
-    //TODO: Get the production Order from USB for demo
+    
+    // Business logic to create State Machine once product has arrived is in thread WorkflowCreator
+    // TODO: Include here orchestrations request to contact Workflow Executor
+    
+    
     
     // Change such that it waits for a production order
     listenForProduct();
     productArrived = true;
     
+    // TODO: Code to be removed only used for DEMO at VTC
     //New core system url
     String dataManagerUrl = props.getProperty("dataman_url","http://localhost:9456/datamanager/historian");
     
@@ -178,7 +197,7 @@ public class WorkflowManager extends ArrowheadClientMain {
     if (server != null) {
       server.shutdownNow();
     }
-    System.out.println("Provider Server stopped");
+    System.out.println("Provider Server stopped for Workflow Manager");
     System.exit(0);
   }
 
@@ -305,6 +324,59 @@ public class WorkflowManager extends ArrowheadClientMain {
       System.out.println("Store registration failed!");
     }
   }
+  
+  // Methods from the Provider template, used without modifications (Except constructor)
+  //=================================================================================================
+  // Methods from the Consumer template, copied with modifications, as needed
+  
+  /* Gets the correct URL where the orchestration requests needs to be sent 
+   * (from app.conf config file + command line argument)
+   */
+  private void getOrchestratorUrl(String[] args) {
+	    String orchAddress = props.getProperty("orch_address", "0.0.0.0");
+	    int orchInsecurePort = props.getIntProperty("orch_insecure_port", 8440);
+	    int orchSecurePort = props.getIntProperty("orch_secure_port", 8441);
+  
+	    orchestratorUrl = Utility.getUri(orchAddress, orchInsecurePort, "orchestrator/orchestration", false, false);
+  }
+  
+  /* Sends the orchestration request to the Orchestrator, 
+   * and compiles the URL for the first provider received from the OrchestrationResponse 
+   */
+  private String sendOrchestrationRequest(ServiceRequestForm srf) {
+	  //Sending a POST request to the orchestrator (URL, method, payload)
+	  Response postResponse = Utility.sendRequest(orchestratorUrl, "POST", srf);
+	  //Parsing the orchestrator response
+	  OrchestrationResponse orchResponse = postResponse.readEntity(OrchestrationResponse.class);
+	  System.out.println("Orchestration Response payload: " + Utility.toPrettyJson(null, orchResponse));
+	  if (orchResponse.getResponse().isEmpty()) {
+		  throw new ArrowheadException("Orchestrator returned with 0 Orchestration Forms!");
+	  }
+
+	  //Getting the first provider from the response
+	  ArrowheadSystem provider = orchResponse.getResponse().get(0).getProvider();
+	  String serviceURI = orchResponse.getResponse().get(0).getServiceURI();
+	  //Compiling the URL for the provider
+	  UriBuilder ub = UriBuilder.fromPath("").host(provider.getAddress()).scheme("http");
+	  if (serviceURI != null) {
+		  ub.path(serviceURI);
+	  }
+	  if (provider.getPort() != null && provider.getPort() > 0) {
+		  ub.port(provider.getPort());
+	  }
+	  if (orchResponse.getResponse().get(0).getService().getServiceMetadata().containsKey("security")) {
+		  ub.scheme("https");
+		  ub.queryParam("token", orchResponse.getResponse().get(0).getAuthorizationToken());
+		  ub.queryParam("signature", orchResponse.getResponse().get(0).getSignature());
+	  }
+	  System.out.println("Received provider system URL: " + ub.toString());
+	  return ub.toString();
+  }
+  
+  // Methods from the Consumer template, copied with modifications, as needed 
+  //=================================================================================================
+  // Methods created for Workflow manager 
+  
   
   private String consumeService_upload(String providerUrl, String path_file) {
 	    /*

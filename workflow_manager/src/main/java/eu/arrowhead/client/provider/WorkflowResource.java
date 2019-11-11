@@ -1,6 +1,12 @@
 package eu.arrowhead.client.provider;
 
 
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+
 import javax.ws.rs.Consumes;
 import javax.ws.rs.GET;
 import javax.ws.rs.POST;
@@ -26,6 +32,11 @@ public class WorkflowResource {
 	static final String SERVICE_URI = "workflow";
 	protected TypeSafeProperties props = Utility.getProp();
 	
+	// Create thread to execute workflow logic
+	private static final Executor executor = Executors.newSingleThreadExecutor();
+	
+	// Create list to hold the productino orders for all the products arriving to the Workstation
+	public static List<ProductRecipeDTO> products = new ArrayList<ProductRecipeDTO>();
 	
 	@GET
 	@Path(SERVICE_URI)
@@ -59,11 +70,32 @@ public class WorkflowResource {
 	
 	@POST
 	@Path(SERVICE_URI + "/ProductRecipe")
-	public ProductRecipeDTO magic(ProductRecipeDTO input) {
-		input.ServiceName += "Magic";
-		System.out.println(input.ServiceName);
-		return input;
+	public Response receiveProductOrder( ProductRecipeDTO input) {
+		
+		
+		
+		if ((input.getProductID() != null && !input.getProductID().trim().isEmpty()) && input.getSeqOperations().length > 0) {
+			
+			products.add(input);
+			WorkflowManager.productArrived = true;
+			System.out.println("New production recipe with ID "+ input.getProductID() +" received!");
+			
+			executor.execute(new WorkflowCreator(input));
+			
+			/*executor.execute(() -> {
+				Files.readAllBytes(new Path("ashdgajdhsg"));
+			});
+			*/
+			
+			
+			return Response.status(Status.OK).build();
+		}
+		
+		else {
+			return Response.status(Status.NO_CONTENT).build();
+		}
 	}
+	
 	
 	
 	//For future demos as we do not have the equipment to POST
