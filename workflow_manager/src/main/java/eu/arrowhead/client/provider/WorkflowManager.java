@@ -45,6 +45,7 @@ import java.util.Map;
 import java.util.ServiceConfigurationError;
 import java.util.Set;
 
+import javax.tools.ToolProvider;
 import javax.ws.rs.ProcessingException;
 import javax.ws.rs.client.Client;
 import javax.ws.rs.client.ClientBuilder;
@@ -88,6 +89,7 @@ public class WorkflowManager extends ArrowheadClientMain {
   // Consumer template fields
   
   private static String orchestratorUrl;
+  public static String executorUrl;
   
   // Consumer template fields  
   //=================================================================================================
@@ -147,6 +149,14 @@ public class WorkflowManager extends ArrowheadClientMain {
     // Business logic to create State Machine once product has arrived is in thread WorkflowCreator
     // TODO: Include here orchestrations request to contact Workflow Executor
     
+    //Compile the URL for the orchestration request.
+    getOrchestratorUrl(args);
+    
+    //Compile the payload, that needs to be sent to the Orchestrator - THIS METHOD SHOULD BE MODIFIED ACCORDING TO YOUR NEEDS
+    ServiceRequestForm srf_executor = compileSRF_Executor();
+    
+    //Sending the orchestration request and parsing the response
+    executorUrl = sendOrchestrationRequest(srf_executor);
     
     
     // Change such that it waits for a production order
@@ -333,11 +343,16 @@ public class WorkflowManager extends ArrowheadClientMain {
    * (from app.conf config file + command line argument)
    */
   private void getOrchestratorUrl(String[] args) {
-	    String orchAddress = props.getProperty("orch_address", "0.0.0.0");
-	    int orchInsecurePort = props.getIntProperty("orch_insecure_port", 8440);
-	    int orchSecurePort = props.getIntProperty("orch_secure_port", 8441);
-  
-	    orchestratorUrl = Utility.getUri(orchAddress, orchInsecurePort, "orchestrator/orchestration", false, false);
+
+	  /* Args where used to create a secure context but are not needed for this example,
+	   *  as the server is in insecure mode
+	   */
+
+	  String orchAddress = props.getProperty("orch_address", "0.0.0.0");
+	  int orchInsecurePort = props.getIntProperty("orch_insecure_port", 8440);
+	  int orchSecurePort = props.getIntProperty("orch_secure_port", 8441);
+
+	  orchestratorUrl = Utility.getUri(orchAddress, orchInsecurePort, "orchestrator/orchestration", false, false);
   }
   
   /* Sends the orchestration request to the Orchestrator, 
@@ -373,9 +388,71 @@ public class WorkflowManager extends ArrowheadClientMain {
 	  return ub.toString();
   }
   
+  //Compiles the payload for the orchestration request
+  private ServiceRequestForm compileSRF_Executor() {
+
+	  String consumerSystemName = props.getProperty("consumer_system_name");
+	  String consumerAddress = props.getProperty("address", "127.0.0.1");
+	  int consumerPort = Integer.parseInt(props.getProperty("insecure_port", "9500"));
+	  
+	  /*
+      ArrowheadSystem: (systemName, address, port, authenticationInfo)
+	   */
+	  ArrowheadSystem consumer = new ArrowheadSystem(consumerSystemName, consumerAddress , consumerPort, "null");
+
+	  /*
+      ArrowheadService: serviceDefinition (name), interfaces, metadata
+      Interfaces: supported message formats (e.g. JSON, XML, JSON-SenML), a potential provider has to have at least 1 match,
+      so the communication between consumer and provider can be facilitated.
+	   */
+	  ArrowheadService service = new ArrowheadService("workflow_executor", Collections.singleton("JSON"), null);
+
+	  //Some of the orchestrationFlags the consumer can use, to influence the orchestration process
+	  Map<String, Boolean> orchestrationFlags = new HashMap<>();
+	  //When true, the orchestration store will not be queried for "hard coded" consumer-provider connections
+	  orchestrationFlags.put("overrideStore", true);
+	  //When true, the Service Registry will ping every potential provider, to see if they are alive/available on the network
+	  orchestrationFlags.put("pingProviders", false);
+	  //When true, the Service Registry will only providers with the same exact metadata map as the consumer
+	  orchestrationFlags.put("metadataSearch", false);
+	  //When true, the Orchestrator can turn to the Gatekeeper to initiate interCloud orchestration, if the Local Cloud had no adequate provider
+	  orchestrationFlags.put("enableInterCloud", false);
+
+	  //Build the complete service request form from the pieces, and return it
+	  ServiceRequestForm srf = new ServiceRequestForm.Builder(consumer).requestedService(service).orchestrationFlags(orchestrationFlags).build();
+	  System.out.println("Service Request payload: " + Utility.toPrettyJson(null, srf));
+	  return srf;
+  }
+  
   // Methods from the Consumer template, copied with modifications, as needed 
   //=================================================================================================
   // Methods created for Workflow manager 
+  
+  
+  // This method could be in a Utility class
+  public static int sendOperation(OperationDTO operationToSend) {
+	  
+	  String operationExecute = executorUrl + "/NewOperation";
+	  
+	  Response getResponse = Utility.sendRequest(operationExecute, "POST", operationToSend);
+	  
+	  return getResponse.getStatus();
+  }
+  
+  public static int sendRecipe(ProductRecipeDTO productToSend) {
+	  
+	  //TODO: No smart product available yet
+	  /*String productRecipeResults = productUrl + "/RecipeResults";
+	   * Response getResponse = Utility.sendRequest(productRecipeResults, "PUT", productToSend);
+	  
+	  return getResponse.getStatus();
+	   */
+	  
+	  System.out.println("Resuts of Product Recipe send back to Smart product");
+	  String message = Utility.toPrettyJson(null , productToSend);
+	  System.out.println(message);
+	  return 0;
+  }
   
   
   private String consumeService_upload(String providerUrl, String path_file) {
@@ -412,6 +489,7 @@ public class WorkflowManager extends ArrowheadClientMain {
 		  }
 		  return response.readEntity(String.class);
 	  }
+  
   
   private void listenForProduct() {
 	  System.out.println("Type \"run\" to start the workflow manager operation or \"stop\"");

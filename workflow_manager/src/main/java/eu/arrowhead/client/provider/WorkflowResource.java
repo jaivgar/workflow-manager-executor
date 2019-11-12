@@ -72,22 +72,18 @@ public class WorkflowResource {
 	@Path(SERVICE_URI + "/ProductRecipe")
 	public Response receiveProductOrder( ProductRecipeDTO input) {
 		
-		
-		
 		if ((input.getProductID() != null && !input.getProductID().trim().isEmpty()) && input.getSeqOperations().length > 0) {
 			
 			products.add(input);
 			WorkflowManager.productArrived = true;
 			System.out.println("New production recipe with ID "+ input.getProductID() +" received!");
 			
-			executor.execute(new WorkflowCreator(input));
+			executor.execute(new WorkflowCreator(0));
 			
 			/*executor.execute(() -> {
 				Files.readAllBytes(new Path("ashdgajdhsg"));
 			});
 			*/
-			
-			
 			return Response.status(Status.OK).build();
 		}
 		
@@ -107,14 +103,30 @@ public class WorkflowResource {
 	
 	@PUT
 	@Path(SERVICE_URI + "/OperationResult")
-	public Response storeOperationResult(StateMachine result_machine) {
+	public Response storeOperationResult(OperationDTO feedback) {
 		
-		// Problem get datamanager url
-		//String status = consumeService_upload(WorkflowManager.dataManagerUrl,path_upload + filename);
+		// We assume always work with the first Production Recipe that arrived (products[0])
+		for (int i = 0; i <  products.get(0).getSeqOperations().length; i++){
+			
+			OperationDTO currentOperation = products.get(0).getSeqOperations()[i];
+			
+			if (currentOperation.getOperationID() == feedback.getOperationID()) {
+				
+				currentOperation.setStatus(feedback.getStatus());
+				currentOperation.setError(feedback.getError());
+				
+				// When all the operations in the recipe are done	
+				if (i == products.get(0).getSeqOperations().length) {
+					executor.execute(new WorkflowCreator(2));
+				}
+				
+				executor.execute(new WorkflowCreator(1));
+				
+				return Response.status(Status.OK).build();
+			}
+		}
 		
-	    System.out.println(" The result from " + result_machine.getmachine() + " is :" + result_machine.getfilename());
-		return Response.status(Status.OK).build();
+		return Response.status(Status.NOT_FOUND).build();
 	}
-	
 	
 }
